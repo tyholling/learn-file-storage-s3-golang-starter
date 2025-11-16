@@ -1,10 +1,12 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -32,19 +34,17 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
-	const maxMemory = 10 << 20 // 20 Mi
-	err = r.ParseMultipartForm(maxMemory)
+	if err = r.ParseMultipartForm(10 << 20); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	thumbnailFileIn, headers, err := r.FormFile("thumbnail")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	file, headers, err := r.FormFile("thumbnail")
 	contentType := headers.Header.Get("Content-Type")
-	imageData, err := io.ReadAll(file)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
+
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -54,16 +54,27 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	videoThumbnails[videoID] = thumbnail{
-		data:      imageData,
-		mediaType: contentType,
+
+	tokens := strings.Split(contentType, "/")
+	if len(tokens) != 2 {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
-	imageEncoded := base64.StdEncoding.EncodeToString(imageData)
-	thumbnailURL := fmt.Sprintf("data:%s;base64,%s", contentType, imageEncoded)
-	// thumbnailURL := fmt.Sprintf("http://192.168.64.2:8091/api/thumbnails/%s", videoID.String())
-	video.ThumbnailURL = &thumbnailURL
-	err = cfg.db.UpdateVideo(video)
+	path := filepath.Join(cfg.assetsRoot, videoID.String()+"."+tokens[1])
+	thumbnailFileOut, err := os.Create(path)
 	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if _, err := io.Copy(thumbnailFileOut, thumbnailFileIn); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	thumbnailURL := fmt.Sprintf("http://192.168.64.2:8091/%s", path)
+	video.ThumbnailURL = &thumbnailURL
+
+	if err = cfg.db.UpdateVideo(video); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
