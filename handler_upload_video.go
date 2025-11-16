@@ -88,15 +88,36 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	aspectRatio, err := getVideoAspectRatio(videoFileOut.Name())
+	processedFilePath, err := processVideoForFastStart(videoFileOut.Name())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	processedFile, err := os.Open(processedFilePath)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	defer func() {
+		if err := os.Remove(processedFile.Name()); err != nil {
+			log.Printf("failed to delete file: %v", err)
+		}
+	}()
+	defer func() {
+		if err := processedFile.Close(); err != nil {
+			log.Printf("failed to close file: %v", err)
+		}
+	}()
+	aspectRatio, err := getVideoAspectRatio(processedFile.Name())
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	prefix := "other/"
-	if aspectRatio == "9:16" {
+	switch aspectRatio {
+	case "9:16":
 		prefix = "portrait/"
-	} else if aspectRatio == "16:9" {
+	case "16:9":
 		prefix = "landscape/"
 	}
 	buf := make([]byte, 32)
@@ -108,7 +129,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	params := s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(filename),
-		Body:        videoFileOut,
+		Body:        processedFile,
 		ContentType: aws.String(mediaType),
 	}
 	if _, err := cfg.s3Client.PutObject(r.Context(), &params); err != nil {
@@ -150,4 +171,16 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		}
 	}
 	return aspectRatio, nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	tempPath := filePath + ".processed"
+	c := exec.Command(
+		"ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", tempPath)
+	buf := bytes.Buffer{}
+	c.Stdout = &buf
+	if err := c.Run(); err != nil {
+		return "", err
+	}
+	return tempPath, nil
 }
