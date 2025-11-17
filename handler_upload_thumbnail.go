@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -16,12 +17,12 @@ import (
 )
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
-	videoIDString := r.PathValue("videoID")
-	videoID, err := uuid.Parse(videoIDString)
+	videoID, err := uuid.Parse(r.PathValue("videoID"))
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid ID", err)
 		return
 	}
+	log.Printf("video id: %s", videoID.String())
 
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {

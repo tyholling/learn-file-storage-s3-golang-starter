@@ -27,6 +27,10 @@ type apiConfig struct {
 	s3Client         *s3.Client
 }
 
+func init() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+}
+
 func main() {
 	godotenv.Load(".env")
 
